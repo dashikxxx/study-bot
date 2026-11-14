@@ -14,7 +14,7 @@ from supabase import create_client, Client
 BOT_TOKEN = "8911975208:AAH8qae_slOlQOD1h3o-r2EHOe0d4nd5r-c"
 ADMIN_ID = 1014319922 
 
-SUPABASE_URL = "https://hzfkuyskyjdjzidffgmw.supabase.co/rest/v1/"
+SUPABASE_URL = "https://hzfkuyskyjdjzidffgmw.supabase.co"
 SUPABASE_KEY = "sb_publishable_syBgnqOnyh7mSc85tKKmkA_azXMWFec"
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
