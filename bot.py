@@ -27,7 +27,6 @@ def get_subjects():
     return [(item['id'], item['name']) for item in res.data]
 
 def get_lectures(subject_id):
-    # Сортируем по ID, чтобы лекции шли по порядку добавления (1, 2, 3...)
     res = supabase.table('lectures').select('*').eq('subject_id', subject_id).order('id').execute()
     return [(item['id'], item['date'], item['status']) for item in res.data]
 
@@ -44,10 +43,16 @@ def get_lecture_info(lecture_id):
     return None
 
 def save_user(user_id, username, first_name):
-    res = supabase.table('users').select('user_id').eq('user_id', user_id).execute()
-    if not res.data:
-        supabase.table('users').insert({"user_id": user_id, "username": username, "first_name": first_name}).execute()
-        return True
+    try:
+        res = supabase.table('users').select('user_id').eq('user_id', user_id).execute()
+        if not res.data:
+            # Если username None, сохраняем пустую строку, чтобы не было ошибки
+            uname = username if username else ""
+            fname = first_name if first_name else "Пользователь"
+            supabase.table('users').insert({"user_id": user_id, "username": uname, "first_name": fname}).execute()
+            return True
+    except Exception as e:
+        print(f"Ошибка сохранения пользователя: {e}")
     return False
 
 def is_user_blocked(user_id):
@@ -153,7 +158,7 @@ async def go_to_main_menu(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer("Главное меню:", reply_markup=main_menu(message.from_user.id))
 
-# --- СВЯЗЬ С АДМИНОМ ---
+# --- СВЯЗЬ С АДМИНОМ (ИСПРАВЛЕНО) ---
 @dp.message(F.text == "✉️ Связаться с админом")
 async def contact_admin(message: types.Message, state: FSMContext):
     if message.from_user.id == ADMIN_ID:
@@ -168,14 +173,20 @@ async def send_message_to_admin(message: types.Message, state: FSMContext):
     user_link = f"@{user.username}" if user.username else f"ID: {user.id}"
     try:
         reply_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Ответить", callback_data=f"reply_{user.id}")]])
+        
         if message.text:
             await bot.send_message(ADMIN_ID, f"✉️ **Сообщение от {user_link}** (ID: {user.id}):\n\n{message.text}", reply_markup=reply_kb, parse_mode="Markdown")
         elif message.photo:
             await bot.send_photo(ADMIN_ID, message.photo[-1].file_id, caption=f"✉️ **Фото от {user_link}** (ID: {user.id})", reply_markup=reply_kb, parse_mode="Markdown")
+        else:
+            await message.answer("❌ Отправь текст или фото.")
+            return
+
         await message.answer("✅ Отправлено!", reply_markup=main_reply_keyboard())
         await state.clear()
-    except Exception:
-        await message.answer("❌ Ошибка отправки.")
+    except Exception as e:
+        print(f"Ошибка отправки админу: {e}")
+        await message.answer("❌ Ошибка отправки. Возможно, админ заблокировал бота.")
         await state.clear()
 
 @dp.callback_query(F.data.startswith("reply_"))
@@ -197,7 +208,7 @@ async def process_admin_reply(message: types.Message, state: FSMContext):
             await bot.send_photo(user_id, message.photo[-1].file_id, caption="👑 **Фото от админа**")
         await message.answer("✅ Отправлено!", reply_markup=main_reply_keyboard())
     except Exception:
-        await message.answer("❌ Ошибка.", reply_markup=main_reply_keyboard())
+        await message.answer("❌ Ошибка. Пользователь заблокировал бота.", reply_markup=main_reply_keyboard())
     await state.clear()
 
 @dp.callback_query(F.data == "admin_stats")
@@ -221,7 +232,6 @@ async def show_dates(callback: types.CallbackQuery):
         return
     for lect_id, date, status in dates:
         prefix = "✅ " if status == "read" else "📅 "
-        # Теперь вместо даты будет выводиться то, что ты ввела (например: Лекция 1)
         keyboard.inline_keyboard.append([InlineKeyboardButton(text=f"{prefix}{date}", callback_data=f"lect_{lect_id}")])
     keyboard.inline_keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")])
     await callback.message.edit_text("Выбери лекцию:", reply_markup=keyboard)
@@ -243,7 +253,6 @@ async def show_lecture(callback: types.CallbackQuery):
         else:
             mark_kb.inline_keyboard.append([InlineKeyboardButton(text="↩️ Снять отметку", callback_data=f"unmarkread_{lect_id}")])
             
-        # Тут тоже меняем слово "Дата" на "Лекция"
         caption = f"Лекция: {date}"
         if len(photo_ids) > 1:
             media_group = [InputMediaPhoto(media=p_id, caption=caption if i==0 else None) for i, p_id in enumerate(photo_ids)]
@@ -341,7 +350,7 @@ async def process_subj_teacher(message: types.Message, state: FSMContext):
     await message.answer(f"✅ Предмет '{data['name']}' добавлен!", reply_markup=main_menu(message.from_user.id))
     await message.answer("Выбери действие:", reply_markup=main_reply_keyboard())
 
-# --- ДОБАВЛЕНИЕ ЛЕКЦИИ (ИЗМЕНЕНО) ---
+# --- ДОБАВЛЕНИЕ ЛЕКЦИИ ---
 @dp.callback_query(F.data == "add_lecture")
 async def start_add_lecture(callback: types.CallbackQuery, state: FSMContext):
     subjects = get_subjects()
@@ -358,12 +367,10 @@ async def process_lect_subject(callback: types.CallbackQuery, state: FSMContext)
     subj_id = callback.data.split("_")[1]
     await state.update_data(subject_id=subj_id, photos=[])
     await state.set_state(AddLecture.waiting_for_date)
-    # Тут меняем текст запроса
     await callback.message.answer("Введи номер лекции или её тему (например: «Лекция 1» или «Введение»):", reply_markup=cancel_keyboard())
 
 @dp.message(AddLecture.waiting_for_date)
 async def process_lect_date(message: types.Message, state: FSMContext):
-    # Убрали проверку на формат даты. Теперь принимается любой текст.
     await state.update_data(date=message.text)
     await state.set_state(AddLecture.waiting_for_photo)
     await message.answer("Отправь ФОТО, затем нажми «✅ Готово»:", reply_markup=done_keyboard())
@@ -397,7 +404,7 @@ async def finish_lecture_photos(message: types.Message, state: FSMContext):
 async def process_lect_wrong(message: types.Message):
     await message.answer("❌ Жду ФОТО или кнопку «✅ Готово».", reply_markup=done_keyboard())
 
-# --- РЕДАКТИРОВАНИЕ И УДАЛЕНИЕ (Упрощенно) ---
+# --- РЕДАКТИРОВАНИЕ И УДАЛЕНИЕ ---
 @dp.callback_query(F.data == "edit_subject_menu")
 async def edit_subject_menu(callback: types.CallbackQuery):
     subjects = get_subjects()
