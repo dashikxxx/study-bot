@@ -27,7 +27,8 @@ def get_subjects():
     return [(item['id'], item['name']) for item in res.data]
 
 def get_lectures(subject_id):
-    res = supabase.table('lectures').select('*').eq('subject_id', subject_id).order('date').execute()
+    # Сортируем по ID, чтобы лекции шли по порядку добавления (1, 2, 3...)
+    res = supabase.table('lectures').select('*').eq('subject_id', subject_id).order('id').execute()
     return [(item['id'], item['date'], item['status']) for item in res.data]
 
 def get_subject_info(subject_id):
@@ -99,7 +100,6 @@ class ReplyToUser(StatesGroup):
     waiting_for_reply = State()
 
 # --- КЛАВИАТУРЫ ---
-# 1. ОБНОВЛЕННАЯ НИЖНЯЯ КЛАВИАТУРА (Добавлена кнопка перезапуска)
 def main_reply_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -115,7 +115,6 @@ def cancel_keyboard():
 def done_keyboard():
     return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="✅ Готово")], [KeyboardButton(text="❌ Отмена"), KeyboardButton(text="🏠 В меню")]], resize_keyboard=True)
 
-# 2. ОБНОВЛЕННОЕ ГЛАВНОЕ МЕНЮ (Убрана "Ближайшая лекция")
 def main_menu(user_id):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[])
     subjects = get_subjects()
@@ -140,10 +139,8 @@ async def cmd_start(message: types.Message, state: FSMContext):
     await message.answer("Привет! Выбери предмет:", reply_markup=main_menu(message.from_user.id))
     await message.answer("Используй кнопки ниже.", reply_markup=main_reply_keyboard())
 
-# --- ОБРАБОТКА НИЖНИХ КНОПОК ---
 @dp.message(F.text == "🔄 Перезапустить")
 async def restart_bot(message: types.Message, state: FSMContext):
-    # Эта кнопка делает то же самое, что и команда /start
     await cmd_start(message, state)
 
 @dp.message(F.text == "❌ Отмена")
@@ -224,9 +221,10 @@ async def show_dates(callback: types.CallbackQuery):
         return
     for lect_id, date, status in dates:
         prefix = "✅ " if status == "read" else "📅 "
+        # Теперь вместо даты будет выводиться то, что ты ввела (например: Лекция 1)
         keyboard.inline_keyboard.append([InlineKeyboardButton(text=f"{prefix}{date}", callback_data=f"lect_{lect_id}")])
     keyboard.inline_keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")])
-    await callback.message.edit_text("Выбери дату:", reply_markup=keyboard)
+    await callback.message.edit_text("Выбери лекцию:", reply_markup=keyboard)
 
 @dp.callback_query(F.data.startswith("lect_"))
 async def show_lecture(callback: types.CallbackQuery):
@@ -245,7 +243,8 @@ async def show_lecture(callback: types.CallbackQuery):
         else:
             mark_kb.inline_keyboard.append([InlineKeyboardButton(text="↩️ Снять отметку", callback_data=f"unmarkread_{lect_id}")])
             
-        caption = f"Лекция за {date}"
+        # Тут тоже меняем слово "Дата" на "Лекция"
+        caption = f"Лекция: {date}"
         if len(photo_ids) > 1:
             media_group = [InputMediaPhoto(media=p_id, caption=caption if i==0 else None) for i, p_id in enumerate(photo_ids)]
             await callback.message.answer_media_group(media=media_group)
@@ -320,7 +319,7 @@ async def ignore_callbacks_in_name(callback: types.CallbackQuery):
 
 @dp.callback_query(AddLecture.waiting_for_date)
 async def ignore_callbacks_in_date(callback: types.CallbackQuery):
-    await callback.answer("Введи дату или нажми «❌ Отмена».")
+    await callback.answer("Введи номер/тему или нажми «❌ Отмена».")
 
 # --- ДОБАВЛЕНИЕ ПРЕДМЕТА ---
 @dp.callback_query(F.data == "add_subject")
@@ -342,7 +341,7 @@ async def process_subj_teacher(message: types.Message, state: FSMContext):
     await message.answer(f"✅ Предмет '{data['name']}' добавлен!", reply_markup=main_menu(message.from_user.id))
     await message.answer("Выбери действие:", reply_markup=main_reply_keyboard())
 
-# --- ДОБАВЛЕНИЕ ЛЕКЦИИ ---
+# --- ДОБАВЛЕНИЕ ЛЕКЦИИ (ИЗМЕНЕНО) ---
 @dp.callback_query(F.data == "add_lecture")
 async def start_add_lecture(callback: types.CallbackQuery, state: FSMContext):
     subjects = get_subjects()
@@ -359,15 +358,12 @@ async def process_lect_subject(callback: types.CallbackQuery, state: FSMContext)
     subj_id = callback.data.split("_")[1]
     await state.update_data(subject_id=subj_id, photos=[])
     await state.set_state(AddLecture.waiting_for_date)
-    await callback.message.answer("Введи дату (ДД.ММ.ГГГГ):", reply_markup=cancel_keyboard())
+    # Тут меняем текст запроса
+    await callback.message.answer("Введи номер лекции или её тему (например: «Лекция 1» или «Введение»):", reply_markup=cancel_keyboard())
 
 @dp.message(AddLecture.waiting_for_date)
 async def process_lect_date(message: types.Message, state: FSMContext):
-    try:
-        datetime.strptime(message.text, "%d.%m.%Y")
-    except ValueError:
-        await message.answer("❌ Неверный формат! Введи как `15.09.2026`", parse_mode="Markdown")
-        return
+    # Убрали проверку на формат даты. Теперь принимается любой текст.
     await state.update_data(date=message.text)
     await state.set_state(AddLecture.waiting_for_photo)
     await message.answer("Отправь ФОТО, затем нажми «✅ Готово»:", reply_markup=done_keyboard())
@@ -394,14 +390,14 @@ async def finish_lecture_photos(message: types.Message, state: FSMContext):
         "status": "new"
     }).execute()
     await state.clear()
-    await message.answer(f"✅ Лекция за {data['date']} сохранена!", reply_markup=main_menu(message.from_user.id))
+    await message.answer(f"✅ Лекция '{data['date']}' сохранена!", reply_markup=main_menu(message.from_user.id))
     await message.answer("Выбери действие:", reply_markup=main_reply_keyboard())
 
 @dp.message(AddLecture.waiting_for_photo)
 async def process_lect_wrong(message: types.Message):
     await message.answer("❌ Жду ФОТО или кнопку «✅ Готово».", reply_markup=done_keyboard())
 
-# --- РЕДАКТИРОВАНИЕ И УДАЛЕНИЕ ---
+# --- РЕДАКТИРОВАНИЕ И УДАЛЕНИЕ (Упрощенно) ---
 @dp.callback_query(F.data == "edit_subject_menu")
 async def edit_subject_menu(callback: types.CallbackQuery):
     subjects = get_subjects()
@@ -486,7 +482,6 @@ async def keep_alive():
         await asyncio.sleep(600)
         try:
             async with aiohttp.ClientSession() as session:
-                # Ссылка из логов Render
                 await session.get("https://study-bot-o2vn.onrender.com/") 
         except Exception:
             pass
