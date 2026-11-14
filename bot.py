@@ -697,20 +697,35 @@ async def process_del_lecture(callback: types.CallbackQuery):
     await callback.answer("Лекция удалена!", show_alert=True)
     await admin_panel(callback)
 
+# --- ЗАПУСК ---
 from aiohttp import web
+import aiohttp
+import asyncio
 
 async def web_server():
     app = web.Application()
     app.router.add_get('/', lambda r: web.Response(text="Bot is alive!"))
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', 10000) # Render по умолчанию ждет порт 10000
+    site = web.TCPSite(runner, '0.0.0.0', 10000)
     await site.start()
+
+async def keep_alive():
+    # Этот цикл будет стучаться на сервер каждые 10 минут (600 секунд), чтобы он не спал
+    while True:
+        await asyncio.sleep(600) 
+        try:
+            async with aiohttp.ClientSession() as session:
+                # ВАЖНО: Здесь должна быть твоя ссылка из логов Render!
+                await session.get("https://study-bot-o2vn.onrender.com/") 
+        except Exception:
+            pass
 
 async def main():
     init_db()
     print("Бот запущен и готов к работе!")
-    asyncio.create_task(web_server()) # Запускаем фейковый сайт в фоне
+    asyncio.create_task(web_server())
+    asyncio.create_task(keep_alive()) # Запускаем будильник
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
